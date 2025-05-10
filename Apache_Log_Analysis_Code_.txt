@@ -1,0 +1,137 @@
+import pandas as pd
+import re
+import csv
+import matplotlib.pyplot as plt
+from urllib.parse import urlparse
+from collections import Counter
+import warnings
+warnings.filterwarnings('ignore')
+
+def secure_log_reader(log_file_path):
+    log_records = []
+    with open(log_file_path, 'r', encoding='utf-8', errors='replace') as file:
+        csv_reader = csv.reader(file)
+        for record in csv_reader:
+            if len(record) >= 2:
+                client_ip = record[0]
+                log_data = ','.join(record[1:-1]) if len(record) > 2 else record[1]
+                agent_string = record[-1]
+                log_records.append([f"{client_ip} {log_data}", agent_string])
+    return pd.DataFrame(log_records, columns=['log_data', 'agent_info'])
+
+def process_apache_logs(input_log_file):
+    log_df = secure_log_reader(input_log_file)
+    
+    apache_pattern = r'^(?P<client_ip>\S+) \S+ \S+ \[(?P<time_record>.+?)\] ' \
+                    r'"(?P<http_method>\S+) (?P<request_url>\S+) (?P<http_version>\S+)" ' \
+                    r'(?P<response_code>\d+) (?P<bytes_sent>\d+) "(?P<referer>.*?)"'
+    
+    processed_entries = []
+    for log_line in log_df['log_data']:
+        try:
+            pattern_match = re.match(apache_pattern, str(log_line))
+            if pattern_match:
+                processed_entries.append(pattern_match.groupdict())
+            else:
+                processed_entries.append({k: None for k in ['client_ip', 'time_record', 'http_method', 
+                                                         'request_url', 'http_version', 'response_code', 
+                                                         'bytes_sent', 'referer']})
+        except:
+            processed_entries.append({k: None for k in ['client_ip', 'time_record', 'http_method', 
+                                                     'request_url', 'http_version', 'response_code', 
+                                                     'bytes_sent', 'referer']})
+    
+    processed_df = pd.DataFrame(processed_entries)
+    final_df = pd.concat([processed_df, log_df['agent_info']], axis=1)
+    final_df.rename(columns={'agent_info': 'full_user_agent'}, inplace=True)
+    
+    final_df['response_code'] = pd.to_numeric(final_df['response_code'], errors='coerce')
+    final_df['bytes_sent'] = pd.to_numeric(final_df['bytes_sent'], errors='coerce')
+    final_df['time_record'] = pd.to_datetime(
+        final_df['time_record'], 
+        format='%d/%b/%Y:%H:%M:%S %z',
+        errors='coerce'
+    )
+    
+    final_df['hostname'] = final_df['request_url'].apply(
+        lambda x: urlparse(x if str(x).startswith('http') else f'http://{x}').netloc
+    )
+    final_df['uri_path'] = final_df['request_url'].apply(lambda x: urlparse(str(x)).path)
+    
+    return final_df
+
+def identify_bruteforce(log_data, attempt_threshold=10):
+    failed_auth = log_data[(log_data['response_code'] == 401) | (log_data['response_code'] == 403)]
+    return failed_auth['client_ip'].value_counts()[failed_auth['client_ip'].value_counts() > attempt_threshold]
+
+def identify_scanners(log_data, scan_threshold=15):
+    return log_data['client_ip'].value_counts()[log_data['client_ip'].value_counts() > scan_threshold]
+
+def examine_user_agents(log_data):
+    malicious_agents = [
+        'nikto', 'sqlmap', 'metasploit', 'nessus', 
+        'dirbuster', 'wpscan', 'hydra', 'havij',
+        'zap', 'burp', 'nmap', 'acunetix'
+    ]
+    
+    log_data['malicious_agent'] = log_data['full_user_agent'].str.lower().str.contains(
+        '|'.join(malicious_agents), na=False
+    )
+    return log_data[log_data['malicious_agent']]
+
+def create_visuals(log_data):
+    plt.figure(figsize=(10, 6))
+    log_data['response_code'].value_counts().plot(kind='bar')
+    plt.title('HTTP Response Code Distribution')
+    plt.savefig('response_codes.png')
+    plt.close()
+    
+    plt.figure(figsize=(12, 6))
+    log_data['client_ip'].value_counts().head(15).plot(kind='bar')
+    plt.title('Top 15 Client IP Addresses')
+    plt.savefig('top_clients.png')
+    plt.close()
+
+def create_analysis_report(log_data, report_file='security_analysis.txt'):
+    with open(report_file, 'w') as report:
+        report.write("=== Apache Log Security Analysis Report ===\n\n")
+        report.write(f"Total log records analyzed: {len(log_data)}\n")
+        report.write(f"Time range: {log_data['time_record'].min()} to {log_data['time_record'].max()}\n\n")
+        
+        brute_force_ips = identify_bruteforce(log_data)
+        report.write("=== Bruteforce Attempts ===\n")
+        report.write(f"Detected {len(brute_force_ips)} suspicious IPs:\n")
+        report.write(brute_force_ips.to_string() + "\n\n")
+        
+        scanning_ips = identify_scanners(log_data)
+        report.write("=== Potential Scanning Activity ===\n")
+        report.write(f"Detected {len(scanning_ips)} scanning IPs:\n")
+        report.write(scanning_ips.to_string() + "\n\n")
+        
+        suspicious_agents = examine_user_agents(log_data)
+        report.write("=== Suspicious User Agents ===\n")
+        report.write(f"Found {len(suspicious_agents)} requests with security tools:\n")
+        report.write(suspicious_agents[['client_ip', 'full_user_agent']].to_string() + "\n\n")
+        
+        report.write("=== Top Statistics ===\n")
+        report.write("Top 10 Client IPs:\n" + log_data['client_ip'].value_counts().head(10).to_string() + "\n")
+        report.write("\nTop 10 Requested URLs:\n" + log_data['request_url'].value_counts().head(10).to_string() + "\n")
+        report.write("\nTop 5 User Agents:\n" + log_data['full_user_agent'].value_counts().head(5).to_string() + "\n")
+
+if _name_ == "_main_":
+    try:
+        print("Initiating Apache log analysis...")
+        parsed_logs = process_apache_logs("apache_logs.csv")
+        print(f"Successfully processed {len(parsed_logs)} log records")
+        create_analysis_report(parsed_logs)
+        create_visuals(parsed_logs)
+        parsed_logs.to_csv('processed_apache_logs.csv', index=False)
+        print("\nAnalysis completed! Generated files:")
+        print("- security_analysis.txt")
+        print("- response_codes.png")
+        print("- top_clients.png")
+        print("- processed_apache_logs.csv")
+    except FileNotFoundError:
+        print("Error: Required file apache_logs.csv not found")
+    except Exception as error:
+        print(f"Unexpected error occurred: {str(error)}")  
