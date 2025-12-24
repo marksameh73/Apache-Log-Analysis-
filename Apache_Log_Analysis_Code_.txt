@@ -117,7 +117,7 @@ def create_analysis_report(log_data, report_file='security_analysis.txt'):
         report.write("Top 10 Client IPs:\n" + log_data['client_ip'].value_counts().head(10).to_string() + "\n")
         report.write("\nTop 10 Requested URLs:\n" + log_data['request_url'].value_counts().head(10).to_string() + "\n")
         report.write("\nTop 5 User Agents:\n" + log_data['full_user_agent'].value_counts().head(5).to_string() + "\n")
-
+ report.write("\nTop 5 User Agents:\n" + log_data['full_user_agent'].value_counts().head(5).to_string() + "\n")
 if _name_ == "_main_":
     try:
         print("Initiating Apache log analysis...")
@@ -134,4 +134,5 @@ if _name_ == "_main_":
     except FileNotFoundError:
         print("Error: Required file apache_logs.csv not found")
     except Exception as error:
+
         print(f"Unexpected error occurred: {str(error)}")  
