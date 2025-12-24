@@ -118,6 +118,8 @@ def create_analysis_report(log_data, report_file='security_analysis.txt'):
         report.write("\nTop 10 Requested URLs:\n" + log_data['request_url'].value_counts().head(10).to_string() + "\n")
         report.write("\nTop 5 User Agents:\n" + log_data['full_user_agent'].value_counts().head(5).to_string() + "\n")
  report.write("\nTop 5 User Agents:\n" + log_data['full_user_agent'].value_counts().head(5).to_string() + "\n")
+ report.write("\nTop 5 User Agents:\n" + log_data['full_user_agent'].value_counts().head(5).to_string() + "\n")
+
 if _name_ == "_main_":
     try:
         print("Initiating Apache log analysis...")
@@ -136,3 +138,4 @@ if _name_ == "_main_":
     except Exception as error:
 
         print(f"Unexpected error occurred: {str(error)}")  
+
